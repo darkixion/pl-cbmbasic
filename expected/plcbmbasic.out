@@ -1,0 +1,265 @@
+CREATE EXTENSION plcbmbasic;
+-- basic call with a text argument
+CREATE FUNCTION hello(who text) RETURNS text AS $$
+10 PRINT "HELLO, ";WHO$;"!"
+$$ LANGUAGE plcbmbasic;
+SELECT hello('WORLD');
+     hello     
+---------------
+ HELLO, WORLD!
+(1 row)
+
+-- numeric types: smallint becomes a % variable, float a plain one
+CREATE FUNCTION scoreboard(player text, lives smallint, mult float8)
+RETURNS text AS $$
+10 PRINT "PLAYER: ";PLAYER$
+20 PRINT "LIVES:";LIVES%
+30 FOR I=1 TO LIVES%
+40 P=P+100*MULT
+50 NEXT
+60 PRINT "BONUS:";P
+$$ LANGUAGE plcbmbasic;
+SELECT scoreboard('BLASTER', 3::smallint, 1.5);
+   scoreboard    
+-----------------
+ PLAYER: BLASTER+
+ LIVES: 3       +
+ BONUS: 450
+(1 row)
+
+-- non-text return types parse the last PRINTed line
+CREATE FUNCTION fact(num int) RETURNS bigint AS $$
+10 F=1
+20 FOR I=1 TO NUM
+30 F=F*I
+40 NEXT I
+50 PRINT F
+$$ LANGUAGE plcbmbasic;
+SELECT n, fact(n) FROM generate_series(1, 5) n;
+ n | fact 
+---+------
+ 1 |    1
+ 2 |    2
+ 3 |    6
+ 4 |   24
+ 5 |  120
+(5 rows)
+
+-- OUT parameters come back from the machine's variable table
+CREATE FUNCTION divmod(num int, den int, OUT quot int, OUT rmd int) AS $$
+10 QUOT=INT(NUM/DEN)
+20 RMD=NUM-QUOT*DEN
+$$ LANGUAGE plcbmbasic;
+SELECT * FROM divmod(47, 5);
+ quot | rmd 
+------+-----
+    9 |   2
+(1 row)
+
+CREATE FUNCTION swap(INOUT x int, INOUT y int) AS $$
+10 T=X:X=Y:Y=T
+$$ LANGUAGE plcbmbasic;
+SELECT * FROM swap(1, 2);
+ x | y 
+---+---
+ 2 | 1
+(1 row)
+
+-- DO blocks report PRINTed output as a NOTICE
+DO $$
+10 FOR I=1 TO 3
+20 PRINT "COMMODORE";I
+30 NEXT
+$$ LANGUAGE plcbmbasic;
+NOTICE:  COMMODORE 1
+COMMODORE 2
+COMMODORE 3
+-- device 8 is the database: SELECT through OPEN, rows via INPUT#, EOF in ST
+CREATE TABLE hiscores(name text, score int);
+INSERT INTO hiscores VALUES ('JEFF', 8500), ('AVRIL', 12000), ('BOB', 3200);
+CREATE FUNCTION top_scores() RETURNS text AS $$
+10 OPEN 1,8,0,"SELECT NAME, SCORE FROM HISCORES ORDER BY SCORE DESC"
+20 INPUT#1,N$,S
+30 PRINT N$;" ";S
+40 IF ST=0 THEN 20
+50 CLOSE 1
+$$ LANGUAGE plcbmbasic;
+SELECT top_scores();
+  top_scores  
+--------------
+ AVRIL  12000+
+ JEFF  8500  +
+ BOB  3200
+(1 row)
+
+-- the command channel executes PRINT#ed SQL and answers in DOS style
+CREATE FUNCTION bump_scores() RETURNS text AS $$
+10 OPEN 15,8,15
+20 PRINT#15,"UPDATE HISCORES SET SCORE=SCORE+1 ";
+30 PRINT#15,"WHERE SCORE > 5000"
+40 INPUT#15,EN,EM$,RC,ES
+50 PRINT "STATUS: ";EN;EM$;RC
+60 CLOSE 15
+$$ LANGUAGE plcbmbasic;
+SELECT bump_scores();
+  bump_scores   
+----------------
+ STATUS:  0OK 2
+(1 row)
+
+-- DML on a data channel yields the row count
+DO $$
+10 OPEN 1,8,0,"DELETE FROM HISCORES WHERE SCORE < 4000"
+20 INPUT#1,N
+30 PRINT "DELETED";N;"ROWS"
+40 CLOSE 1
+$$ LANGUAGE plcbmbasic;
+NOTICE:  DELETED 1ROWS
+-- values with separators come back quoted; NULLs as empty strings
+CREATE TABLE oddities(a text, b int);
+INSERT INTO oddities VALUES ('HELLO, WORLD', 1), (NULL, 2);
+CREATE FUNCTION read_oddities() RETURNS text AS $$
+10 OPEN 1,8,0,"SELECT A, B FROM ODDITIES ORDER BY B"
+20 INPUT#1,A$,B
+30 PRINT "[";A$;"]";B
+40 IF ST=0 THEN 20
+$$ LANGUAGE plcbmbasic;
+SELECT read_oddities();
+  read_oddities   
+------------------
+ [HELLO, WORLD] 1+
+ [] 2
+(1 row)
+
+-- GET# reads the stream byte by byte
+CREATE FUNCTION firstbyte() RETURNS text AS $$
+10 OPEN 1,8,0,"SELECT 'HELLO'"
+20 GET#1,C$
+30 PRINT "FIRST BYTE: ";C$
+40 CLOSE 1
+$$ LANGUAGE plcbmbasic;
+SELECT firstbyte();
+   firstbyte   
+---------------
+ FIRST BYTE: H
+(1 row)
+
+-- runtime errors arrive through the ERROR vector with code and line
+CREATE FUNCTION broken() RETURNS text AS $$
+10 X=1
+20 PRINT 1/0
+$$ LANGUAGE plcbmbasic;
+SELECT broken();
+ERROR:  BASIC error: ?DIVISION BY ZERO  ERROR IN 20
+DETAIL:  Program was:
+
+10 X=1
+20 PRINT 1/0
+
+
+CREATE FUNCTION lost() RETURNS text AS $$
+10 GOTO 999
+$$ LANGUAGE plcbmbasic;
+SELECT lost();
+ERROR:  BASIC error: ?UNDEF'D STATEMENT  ERROR IN 10
+DETAIL:  Program was:
+
+10 GOTO 999
+
+
+-- printing something that merely looks like an error is fine
+CREATE FUNCTION fake_error() RETURNS text AS $$
+10 PRINT "?FAKE  ERROR IN 99"
+$$ LANGUAGE plcbmbasic;
+SELECT fake_error();
+     fake_error     
+--------------------
+ ?FAKE  ERROR IN 99
+(1 row)
+
+-- SQL errors from device 8 surface as PostgreSQL errors
+DO $$
+10 OPEN 1,8,0,"SELECT * FROM NO_SUCH_TABLE"
+$$ LANGUAGE plcbmbasic;
+ERROR:  relation "no_such_table" does not exist
+LINE 1: SELECT * FROM NO_SUCH_TABLE
+                      ^
+QUERY:  SELECT * FROM NO_SUCH_TABLE
+-- one machine per backend: no recursion through device 8
+CREATE FUNCTION inner_fn() RETURNS int AS $$
+10 PRINT 42
+$$ LANGUAGE plcbmbasic;
+CREATE FUNCTION outer_fn() RETURNS text AS $$
+10 OPEN 1,8,0,"SELECT INNER_FN()"
+$$ LANGUAGE plcbmbasic;
+SELECT outer_fn();
+ERROR:  PL/CBM-BASIC functions cannot be called recursively
+DETAIL:  The emulated Commodore 64 is already running a program, and there is only one machine per backend.
+CONTEXT:  SQL statement "SELECT INNER_FN()"
+-- there is no keyboard attached to your database
+DO $$
+10 INPUT A$
+$$ LANGUAGE plcbmbasic;
+ERROR:  BASIC program executed INPUT or GET
+DETAIL:  There is no keyboard attached to your database.
+HINT:  Pass data as function arguments instead.
+-- CHR$ cannot smuggle invalid bytes into a text datum
+CREATE FUNCTION highbytes() RETURNS text AS $$
+10 PRINT "A";CHR$(200);"B"
+$$ LANGUAGE plcbmbasic;
+SELECT highbytes();
+ highbytes 
+-----------
+ A?B
+(1 row)
+
+-- validator: BASIC's opinions on names are delivered at CREATE time
+CREATE FUNCTION bad1(total int) RETURNS int AS $$
+10 PRINT TOTAL
+$$ LANGUAGE plcbmbasic;
+ERROR:  parameter name "total" contains the BASIC keyword TO
+DETAIL:  The BASIC V2 tokenizer crunches keywords even inside variable names, so this name cannot be used in a program.
+HINT:  This is why nobody could ever have a variable called TOTAL on the Commodore 64.
+CREATE FUNCTION bad2(alpha text, alps text) RETURNS int AS $$
+10 PRINT ALPHA$
+$$ LANGUAGE plcbmbasic;
+ERROR:  parameters "ALPHA" and "ALPS" collide in BASIC
+DETAIL:  Only the first two characters of a BASIC V2 variable name are significant, so both become "AL$".
+CREATE FUNCTION bad3(times int) RETURNS int AS $$
+10 PRINT TIMES
+$$ LANGUAGE plcbmbasic;
+ERROR:  parameter name "times" shadows a BASIC system variable
+DETAIL:  TI (the jiffy clock) and ST (I/O status) are built into BASIC V2, and only the first two characters of a name are significant.
+CREATE FUNCTION bad4(my_var int) RETURNS int AS $$
+10 PRINT MYVAR
+$$ LANGUAGE plcbmbasic;
+ERROR:  parameter name "my_var" is not a valid BASIC variable name
+DETAIL:  BASIC V2 variable names may contain only letters and digits.
+HINT:  Underscores were not invented until later.
+-- validator: line numbers below 10 are reserved, and all lines need one
+CREATE FUNCTION bad5(x int) RETURNS int AS $$
+5 PRINT X
+$$ LANGUAGE plcbmbasic;
+ERROR:  BASIC line number 5 is reserved
+DETAIL:  Lines 0 through 9 hold the generated argument assignments; user code starts at line 10.
+CREATE FUNCTION bad6() RETURNS int AS $$
+PRINT 42
+$$ LANGUAGE plcbmbasic;
+ERROR:  every line of a PL/CBM-BASIC function must begin with a line number
+DETAIL:  Offending line: PRINT 42
+-- validator: no sets, no triggers
+CREATE FUNCTION bad7() RETURNS SETOF int AS $$
+10 PRINT 1
+$$ LANGUAGE plcbmbasic;
+ERROR:  PL/CBM-BASIC functions cannot return sets
+HINT:  One value at a time, please. It's 1982.
+CREATE FUNCTION bad8() RETURNS trigger AS $$
+10 PRINT 1
+$$ LANGUAGE plcbmbasic;
+ERROR:  PL/CBM-BASIC does not support triggers
+HINT:  PRESS PLAY ON TAPE.
+-- NULL arguments are rejected
+SELECT hello(NULL);
+ERROR:  PL/CBM-BASIC cannot pass NULL for parameter "WHO"
+HINT:  NULL was not invented until later. Declare the function STRICT.
+DROP TABLE hiscores, oddities;

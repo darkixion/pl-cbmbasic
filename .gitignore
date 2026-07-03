@@ -1,0 +1,10 @@
+# Generated during build
+*.o
+*.so
+*.bc
+# pg_regress artefacts
+/log/
+/results/
+/output_iso/
+/tmp_check/
+/tmp_check_iso/

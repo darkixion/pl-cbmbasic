@@ -1,0 +1,4 @@
+comment = 'PL/CBM-BASIC: Commodore 64 BASIC V2 procedural language'
+default_version = '1.0'
+module_pathname = '$libdir/plcbmbasic'
+relocatable = false
