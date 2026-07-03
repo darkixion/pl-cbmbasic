@@ -1,4 +1,4 @@
-# PL/CBM-BASIC
+# PL/CBMBASIC
 
 Commodore 64 BASIC V2 as a PostgreSQL procedural language. Function bodies
 are executed by [cbmbasic](https://github.com/mist64/cbmbasic) - a static
@@ -162,7 +162,7 @@ Unnamed parameters fall back to positional letters: argument 1 is
 
 The suffix-less float variables are the CBM 40-bit format (8-bit
 excess-128 exponent, 32-bit mantissa): about 9 significant digits,
-magnitudes from ±2.93873588e-39 to ±1.70141183e38. PL/CBM-BASIC polices
+magnitudes from ±2.93873588e-39 to ±1.70141183e38. PL/CBMBASIC polices
 that range on the way in: NaN and Infinity are rejected (BASIC would
 silently read `V=INFINITY` as an unset variable, i.e. zero), magnitudes
 above 1.70141183e38 are rejected with the range in the message, and
